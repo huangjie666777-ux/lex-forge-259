@@ -23,6 +23,22 @@ public sealed class Lexer
     /// </summary>
     public RuleAuditReport Audit() => RuleAuditor.Audit(_dfa, _names);
 
+    internal bool TryGetRuleIndex(string name, out int index)
+    {
+        for (int i = 0; i < _names.Length; i++)
+        {
+            if (_names[i] == name)
+            {
+                index = i;
+                return true;
+            }
+        }
+        index = -1;
+        return false;
+    }
+
+    internal bool IsSkipRule(int index) => _skip[index];
+
     /// <summary>Tokenizes the entire text. Empty text yields an empty result.</summary>
     public IReadOnlyList<LexToken> Scan(string text)
     {
