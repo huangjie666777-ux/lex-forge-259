@@ -41,6 +41,37 @@ foreach (RuleAuditEntry entry in report.Entries)
 - When `CanWin` is false the rule is **fully shadowed**: `ShortestAccepted` is its shortest accepted word and `WinningRule` names the earlier rule that actually wins on that word. Shadowing is decided against the union of all predecessors - e.g. `x1`, `y2` together fully shadow `x1|y2` even though neither predecessor alone covers it.
 - All answers come from exact automaton reachability: a breadth-first search over the compiled DFA with edges taken in ASCII order (the first path reaching a state is its shortest, lex-smallest word). No `Regex`, random sampling, or bounded word-length enumeration is involved.
 
+## LL(1) parsing
+
+The compiled lexer is paired with an explicitly modeled grammar (no grammar strings, no generator). `GrammarCompiler.Compile(lexer, grammar)` validates the grammar, computes nullable/FIRST/FOLLOW fixed points, rejects left recursion, and builds a predictive table including `EOF`; the returned `Parser` parses the **complete** text into an ordered parse tree using the existing lexer.
+
+```csharp
+GrammarSymbol T(string name) => GrammarSymbol.Terminal(name);
+GrammarSymbol N(string name) => GrammarSymbol.Nonterminal(name);
+
+// Program -> Stmt                       Stmt -> let Ident = Expr ;
+// Expr    -> Number Args                Args -> , Number Args | epsilon
+var grammar = new GrammarDefinition("Program", new Production[]
+{
+    new("program", "Program", new[] { N("Stmt") }),
+    new("stmt", "Stmt", new[] { T("KwLet"), T("Ident"), T("Assign"), N("Expr"), T("Semi") }),
+    new("expr", "Expr", new[] { T("Number"), N("Args") }),
+    new("args-cons", "Args", new[] { T("Comma"), T("Number"), N("Args") }),
+    new("args-empty", "Args", Array.Empty<GrammarSymbol>()), // empty RHS = epsilon
+});
+Parser parser = GrammarCompiler.Compile(lexer, grammar);
+NonterminalNode tree = parser.Parse("let answer = 42, 7;");
+```
+
+- `GrammarDefinition(Start, Productions)` and `Production(Id, Left, Right)` are snapshotted at compile time; mutating them afterwards never affects the compiled parser. Production identifiers must be unique.
+- `GrammarSymbol.Terminal(name)` / `.Nonterminal(name)` distinguish symbol kinds explicitly. Terminals name **non-skip** lexer rules; referencing a skip rule or an undefined name fails compilation, as does an undefined symbol or an invalid start symbol.
+- Nullable and FIRST are fixed points; nullable prefixes are propagated fully, so direct **and** indirect left recursion (including through epsilon-deriving prefixes) are rejected before table construction.
+- FOLLOW is a fixed point seeded with `EOF` at the start symbol. Table cell `(nonterminal, lookahead)`: FIRST of a nullable production contributes FOLLOW. When two productions land in one cell compilation fails with `GrammarCompileException` carrying `Nonterminal`, `Lookahead`, and the stably ordered `ProductionIds`; no production is chosen silently.
+- `Parse(text)` first calls the existing lexer; lexical errors surface unchanged as `LexerScanException`. Parsing consumes every token: a legal prefix followed by extra input fails with actual token vs expected `EOF`.
+- Parse nodes: `NonterminalNode.Name`/`ProductionId` with ordered `Children`; `TerminalNode.Token` is the original `LexToken`; an epsilon production yields a nonterminal with no children.
+- The first syntax error stops the parse. `SyntaxException` reports `Actual` (token name or `EOF`), `ActualText`, `Expected` (the prediction set of the remaining suffix, stably sorted ordinal with `EOF` last), and `Offset`/`Line`/`Column`. Missing input is `EOF` at the end position, which **includes trailing skipped text** computed from the source; only LF advances the line.
+- `Parser` preserves the existing surface: `parser.Scan(text)`, `parser.Audit()`, and compilation via `GrammarCompiler.Compile` (the lexer's own `Compile`/`Scan`/`Audit` are unchanged). Repeated parses are independent and never share state.
+
 ## Pattern syntax
 
 - ASCII literals and escapes: `\n`, `\r`, `\t`, and escaped metacharacters (`\\ . * + ? ( ) [ ] | ^ $ { } -`).
@@ -70,6 +101,9 @@ foreach (RuleAuditEntry entry in report.Entries)
 - `Dfa.cs` - subset construction with epsilon closure, per-state accept sets and accept priorities.
 - `RuleAudit.cs` - exact DFA reachability analysis (intersections, winning witnesses, union shadowing).
 - `Lexer.cs` - `LexerCompiler`, the scanning loop, and `Lexer.Audit()`.
+- `Grammar.cs` / `ParseTree.cs` - grammar model (`Production`, `GrammarSymbol`, `GrammarDefinition`), exceptions, and parse tree nodes.
+- `GrammarCompiler.cs` - validation, nullable/FIRST/FOLLOW fixed points, nullable-prefix left-recursion rejection, and the EOF-aware predictive table.
+- `Parser.cs` - table-driven full-input parsing, ordered tree construction, and first-error reporting.
 - `LexForge259.Tests` - xUnit tests; `LexForge259.Demo` - runnable example.
 
 ## Build, test, demo

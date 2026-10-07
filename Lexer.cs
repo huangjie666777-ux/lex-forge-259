@@ -10,6 +10,12 @@ public sealed class Lexer
     private readonly string[] _names;
     private readonly bool[] _skip;
 
+    /// <summary>Names of rules that emit tokens (i.e. non-skip rules), in declaration order.</summary>
+    internal string[] TokenRuleNames => _names.Where((_, i) => !_skip[i]).ToArray();
+
+    /// <summary>Names of skip rules, in declaration order.</summary>
+    internal string[] SkipRuleNames => _names.Where((_, i) => _skip[i]).ToArray();
+
     internal Lexer(Dfa dfa, string[] names, bool[] skip)
     {
         _dfa = dfa;
